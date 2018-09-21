@@ -1,0 +1,329 @@
+---
+title: "Stocks"
+author: "Chelsea Ursaner"
+date: "9/11/2018"
+output:
+  word_document: default
+  html_document: default
+---
+
+### Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyquant, stringr)
+```
+
+### Exploring tidyquant - https://cran.r-project.org/web/packages/tidyquant/vignettes/TQ01-core-functions-in-tidyquant.html 
+
+```{r}
+# looking at key ratios for Tesla
+# tq_get lets you pull prices, financials, etc.
+tq_get_options()
+
+# pulling key ratios returns a two-column dataset. The 'data' column is a list
+tesla_ratios_all <- tq_get("TSLA", get = "key.ratios")
+tesla_ratios_all 
+```
+
+## Inspecting lists and practicing purrr
+```{r}
+# Working with lists
+tesla_ratios_list <- tesla_ratios_all$data # this saves the list column as a new object - a list of 7
+tesla_Financial <- tesla_ratios_all$data[1] # this creates a list of just the first sub section - a list of 1
+tesla_Financial2 <- tesla_ratios_all$data[[1]] # this unnests the list. A data frame - 150 rows and 5 columns
+
+# inspecting a list element
+# look at the variable names in the raw data
+names(tesla_Financial2) 
+# save it as a factor
+tesla_Financial2$sub.section <- as.factor(tesla_Financial2$sub.section)
+# look at the unique values in sub section
+levels(tesla_Financial2$sub.section)
+# the ratios in Financial are not split into sub-sections
+
+# inspecting Growth ratios
+tesla_Growth <- tesla_ratios_all$data[[2]]
+levels(as.factor(tesla_Growth$sub.section))
+levels(as.factor(tesla_Growth$category)) # see all of the ratios
+
+glimpse(tesla_Growth) # see how the data is formatted
+
+# Creating named lists
+# Step 1 - do it for one
+tesla_Growth_levels <- levels(as.factor(tesla_Growth$sub.section))
+
+# Step 2 - make it a recipe
+# I want to get a list of the distinct ratios for each section
+# first try with just map
+subsection_levels <- map(tesla_ratios_all$data, ~levels(as.factor(.x$sub.section))) #yay!!!
+
+# Main list I want - all categories of ratios
+tesla_ratios_all$categories <- map(tesla_ratios_all$data, ~levels(as.factor(.x$category))) 
+tesla_ratios_all # now it's a list column
+
+# make a new named list using the section names 
+categories <- map(tesla_ratios_all$data, ~levels(as.factor(.x$category))) %>%
+ set_names(tesla_ratios_all$section) 
+# YAYY!!! So much easier than I realized
+
+# export list to look at
+print(categories[1:7])
+```
+
+### More practice - making a tibble
+```{r}
+# Pulling multiple stocks from tidyquant
+test <- tq_get(c("TSLA", "DATA"), get = "key.ratios")
+# This results in a tibble with the stock repeated 7 times for each section
+names(test)
+
+# Making a tibble
+stocks_tbl <- tibble(
+  name    = levels(as.factor(test$symbol)),
+  Ratios   = "this shall be a list?")
+```
+
+
+### Test some code - pulling and visualizing indicators for TSLA
+
+```{r eval=F}
+# Pull the indicators I care about for one stock - TSLA
+# Pull an entire section
+tesla_ratios <- tesla_ratios_all %>%
+    filter(section == "Valuation Ratios") %>%
+    unnest() 
+
+# Visualize the different ratios within that section 
+tesla_ratios %>%
+    ggplot(aes(x = date, y = value)) +
+    geom_line(aes(col = factor(category, levels = c("Price to Earnings", "Price to Cash Flow", "Price to Book", "Price to Sales"))), 
+              size = 1)  + 
+    labs(title = "10-Year Historical Valuation Ratios for TSLA", x = "", 
+         y = "", col = "") +
+    theme_tq() +
+    scale_color_tq()
+```
+
+## Applying purrr 
+
+### Make my Portfolio Dataset with All the Data
+```{r}
+# Pull key ratios 
+# specify the stock - this will be the .x
+stock = "TSLA"
+
+key_ratios <- tq_get(stock, get = "key.ratios") # results in a tibble
+```
+
+
+### Run first recipe - pulling all the tidyquant information for multiple stocks
+
+```{r}
+# Read TD Ameritrade stocks as a list
+stocks <- (str_split("AMZN
+ANSS
+ASCMA
+BDFFX
+BEXFX
+C
+CS
+DAL
+DATA
+DDD
+GLIBA
+KGFHY
+KROTY
+KW
+LEXEA
+LGF.B
+LSXMA
+LSXMK
+LTRPA
+MANH
+PATI
+PRMTX
+RSTAY
+SMCI
+SSP
+SSYS
+SU
+TM
+TSLA
+UA
+UAA
+WCN", pattern="\n"))
+
+# make a smaller subset
+stocks_subset <- head(stocks[[1]])
+glimpse(stocks)
+
+# turn it into a recipe - ex. map(people, ~ length(.x$starships))
+# remember I can hover over map to see the arguments. map(.x, .f)
+# for the [list, vector, column, dataframe!.. hence .x], do [.f] 
+# map(stocks_subset, ~ tq_get(.x, "key_ratios"))
+# test my recipe!
+key_ratios2 <- map(stocks_subset, ~ tq_get(.x, "key_ratios")) # results in a list of six
+
+# inspect my new list! 
+key_ratios2[1:2] #look at the first two list items
+# not helpful
+# let's name it something that makes sense. What did I do/what was I going for with this list?
+my_portfolio_subset <- key_ratios2 %>%
+  set_names(stocks_subset)
+# That worked! my_portfolio_subset is now a named list of 6 stocks
+# Each stock is a tibble 
+# Each tibble has a list column called data that is a data frame of all the ratios over time 
+```
+
+### Make and run second recipe - Extract a key metric from each stock - Return on Investment 
+```{r}
+# start with one - TSLA
+# 1. extract a filtered dataframe of all the ROIs over time
+tesla_ROI <- as.data.frame(tesla_ratios_all$data[2]) %>%
+                             filter(category == "Return on Invested Capital %") %>%
+  select(-1,-2) %>%
+  rename(key_ratio = category)
+                           
+glimpse(levels(as.factor(tesla_ROI$category)))
+
+# Take the average 
+tesla_avg_ROI <- mean(tesla_ROI$value, na.rm=T)
+# Save it as a percentage
+tesla_avg_ROI <- round((mean(tesla_ROI$value, na.rm=T))/100,2)
+
+# condense it
+avg_ROI <- round(tesla_avg_ROI/100,2)
+
+# Make my recipe
+# map(.x, ~f) - for each stock, calculate its return on invested capital
+my_portfolio_Profitability <- map(my_portfolio_subset, ~ (.x$data[[2]])) 
+
+my_portfolio_ROI <- map(my_portfolio_Profitability, ~filter(.x, category == "Return on Invested Capital %"))
+
+my_portfolio_avg_ROI <- map(my_portfolio_ROI, ~round((mean(.x$value, na.rm=T))/100,2))
+my_portfolio_avg_ROI
+```
+
+### Make third recipe - Pull key indicators and compile them into a tibble
+
+```{r}
+# Now I have a list of stocks in the format I want it to look like. 
+# Time to make the data what I want - extract key indicators
+
+# Start with one - TSLA 
+tesla_ratios_all
+
+## Indicator group 1 - Financials
+# Share Price, Revenue, and Earnings per Share most recent values
+tesla_i1 <- tesla_ratios_all %>%
+    filter(section == "Financials") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  filter(group %in% c(1, 6, 10)) %>% 
+  select(category, value) 
+tesla_i1$value <- as.numeric(as.character(tesla_i1$value))
+
+## Next section - Profitability
+# Bunch of indicators
+tesla_i2 <- tesla_ratios_all %>%
+    filter(section == "Profitability") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  arrange(group) %>%
+  filter(group %in% c(18, 20, 22, 25, 26, 27:31)) %>% 
+  select(category, value)
+
+# Next section- growth. All the indicators!
+tesla_i3 <- tesla_ratios_all %>%
+    filter(section == "Growth") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  select(category, value)
+
+# Last group of indicators- Valuation Ratio
+# Just Price to Earnings for now
+tesla_i4 <- tesla_ratios_all %>%
+    filter(section == "Valuation Ratios") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  filter(group == 86) %>% 
+  select(category, value)
+
+# Check price to earnings just for fun
+tesla_i1[1,2]/tesla_i1[2,2]
+tesla_i4[1,2] # Hm.. doesn't match. Oh well
+
+# Make final tibble for TSLA
+TSLA <- rbind(tesla_i1, tesla_i2, tesla_i3, tesla_i4)
+TSLA$category <- as.character(TSLA$category)
+TSLA$value <- as.numeric(TSLA$value)
+TSLA
+```
+
+### Compile tibbles into a named list - My Indicators
+```{r}
+# Make my recipe
+
+# Fist for one section
+test <- map(my_portfolio_subset, ~ (.x %>%
+  filter(section == "Financials") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  filter(group %in% c(1, 6, 10)) %>% 
+  select(category, value) %>%
+    mutate(Indicator = as.character(category), Value = as.numeric(value)) %>%
+   select(Indicator, Value)))
+glimpse(test[1])
+
+# Now for the whole thing
+my_indicators <- map(my_portfolio_subset, ~ rbind((.x %>%
+    filter(section == "Financials") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  filter(group %in% c(1, 6, 10)) %>% 
+  select(category, value)),
+  (.x %>%
+    filter(section == "Profitability") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  arrange(group) %>%
+  filter(group %in% c(18, 20, 22, 25, 26, 27:31)) %>% 
+  select(category, value)),
+  (.x %>%
+    filter(section == "Growth") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  select(category, value)),
+  (.x %>%
+    filter(section == "Valuation Ratios") %>%
+    unnest()  %>% 
+  filter(!is.na(date)) %>% 
+  group_by (category) %>%
+  slice(which.max(date)) %>%
+  filter(group == 86) %>% 
+  select(category, value))
+))
+```
+
+## Done! View List
+```{r}
+print(my_indicators)
+```
